@@ -30,7 +30,21 @@ class AlphaVantageClient:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(self.BASE_URL, params=params)
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+        # Round-3 fix R3-4: AlphaVantage's free tier returns HTTP 200 with a
+        # ``{"Note": ...}`` or ``{"Information": ...}`` envelope when the
+        # 5-req/min cap is exceeded. Previously this envelope was passed
+        # through as if it were valid data, so callers (overview / news /
+        # daily) silently saw "empty" responses instead of triggering the
+        # tenacity retry. Detect the envelope and raise so retry fires; if
+        # we are still throttled after the final attempt, the existing
+        # ``except Exception`` in the public methods downgrades it to ``{}``
+        # which is the same shape the tests already expect.
+        if isinstance(data, dict):
+            note = data.get("Note") or data.get("Information")
+            if note and len(data) == 1:
+                raise RuntimeError(f"AlphaVantage throttled: {note}")
+        return data
 
     async def get_company_overview(self, symbol: str) -> Dict[str, Any]:
         try:

@@ -47,3 +47,33 @@ Items observed during Phase 1 that did not meet the bar for an atomic fix in thi
 * AlphaVantage rate-limit detection (`Note`/`Information` envelope keys not parsed).
 * CoinGecko client has no rate limiter — bursts will hit 429 quickly.
 * Polygon news loader discards `published_utc`, preventing time-windowed queries.
+
+---
+
+## Round 3 — commit (this round)
+
+| # | Severity | File:line | Defect | Probe | Pinning verifier |
+|---|---|---|---|---|---|
+| R3-1 | **High** | `agents/risk_agent.py:78-83` | RiskAgent still uses the narrow `-/•/·` inline parser; CJK-numbered LLM findings (`1。`, `2、`, `3）`, `4.`) are dropped — Round-2 fix landed in Technical/Fundamental but missed Risk | `scripts/audit_round3/probe_a_risk_parser.py` | `scripts/audit_round3/probe_postfix_verify.py::check_r3_1_risk_parser` |
+| R3-2 | **High** | `services/repository.py:39` | tz-aware `ResearchReport.created_at` (from `schemas._utcnow`) written into naive `ReportORM.created_at` `DateTime` column → silent representation drift between JSON blob (`+00:00`) and indexed timestamp column | `scripts/audit_round3/probe_b_repo_tz.py` | `scripts/audit_round3/probe_postfix_verify.py::check_r3_2_repo_tz` |
+| R3-3 | Medium | `tools/news_tool.py:67-74` | Polygon `published_utc` ISO-8601 silently dropped; every Polygon-sourced `NewsItem.published_at == None`, breaking recency ranking and "last 24h" digests | `scripts/audit_round3/probe_c_news_published.py` | `scripts/audit_round3/probe_postfix_verify.py::check_r3_3_news_published` |
+| R3-4 | Medium | `tools/alpha_vantage_tool.py:25-33` | Free-tier throttling envelopes (`{"Note": ...}` / `{"Information": ...}`) returned as HTTP 200 pass through as data; tenacity retry never fires, callers see "empty" payloads | `scripts/audit_round3/probe_d_av_throttle.py` | `scripts/audit_round3/probe_postfix_verify.py::check_r3_4_av_throttle` |
+| R3-5 | Medium | `tools/onchain_tool.py:13-27` | `CoinGeckoClient` has no `AsyncRateLimiter`; bursts of concurrent `get_coin`/`get_market_chart` trip 429 with no backpressure (Polygon and AlphaVantage both gate `_get`) | `scripts/audit_round3/probe_e_cg_ratelimit.py` | `scripts/audit_round3/probe_postfix_verify.py::check_r3_5_cg_ratelimit` |
+| R3-6 | Low | `tools/polygon_tool.py:25-26` | `PolygonClient._client()` defined but never invoked anywhere (every real call site builds `httpx.AsyncClient` inline); misleading dead code | `scripts/audit_round3/probe_f_polygon_dead.py` | `scripts/audit_round3/probe_postfix_verify.py::check_r3_6_polygon_dead` |
+
+### Validation matrix (Round 3)
+
+| Check | Result |
+|---|---|
+| `compileall` all packages (`agents`, `tools`, `services`, `models`, `api`, `workflows`, `config`) | green |
+| `pytest -q` | **39 passed**, 1 warning, 0 failed |
+| `scripts/audit_round3/probe_postfix_verify.py` | **6/6 PASS** |
+
+### Round-3 backlog (deferred)
+
+No high/medium-severity issues remain unfixed from Round 3. Future rounds may consider:
+
+* Adding a coverage gate to CI so Round-2 / Round-3 regression tests cannot silently rot.
+* Auditing the Playwright scrapers (`tools/playwright_scraper.py`) — they synthesize `datetime.now(timezone.utc)` per item rather than parsing site-rendered timestamps.
+* Considering a typed `language` enum at the API boundary so `# type: ignore` in `api/routes.py` can be dropped.
+

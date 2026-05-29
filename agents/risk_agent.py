@@ -75,12 +75,13 @@ class RiskAgent(BaseAgent):
             "最后输出 3-5 条要点。"
         )
         summary = await self.llm_summary(prompt, context)
-        findings = []
-        for line in (summary or "").splitlines():
-            l = line.strip()
-            if l.startswith(("-", "•", "·")):
-                findings.append(l.lstrip("-•· ").strip())
-        findings = findings[:6]
+        # Round-3 fix R3-1 (agents/risk_agent.py:78-83): RiskAgent still
+        # used the narrow `-/•/·` inline parser that Round-2 retired for
+        # technical_agent and fundamental_agent. CJK-numbered findings
+        # (`1。`, `2、`, `3）`) were silently dropped — probe_a captured
+        # only 1 of 5. Delegate to the shared BaseAgent.parse_findings
+        # so future agents stay in sync automatically.
+        findings = self.parse_findings(summary, max_items=6)
 
         return AgentReport(
             agent=self.name,

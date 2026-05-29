@@ -19,6 +19,21 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _to_naive_utc(dt: Optional[datetime]) -> datetime:
+    """Round-3 fix R3-2: ``ReportORM.created_at`` is a naive ``DateTime``
+    column, but ``ResearchReport.created_at`` defaults to a tz-aware UTC
+    value via ``schemas._utcnow``. Writing the tz-aware value into the
+    naive column causes silent representation drift between the JSON blob
+    (with ``+00:00``) and the indexed column (without). Coerce every
+    incoming datetime to naive UTC at the boundary so both shapes agree.
+    """
+    if dt is None:
+        return _utcnow_naive()
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 class ReportRepository:
     """CRUD for reports."""
 
@@ -36,7 +51,9 @@ class ReportRepository:
                     confidence=report.confidence,
                     full_json=report.model_dump_json(),
                     language=report.request.language,
-                    created_at=report.created_at or _utcnow_naive(),
+                    # Round-3 fix R3-2: column is naive — never let a
+                    # tz-aware datetime sneak through.
+                    created_at=_to_naive_utc(report.created_at),
                 )
                 session.add(row)
                 await session.commit()

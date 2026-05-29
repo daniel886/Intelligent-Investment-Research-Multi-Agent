@@ -22,8 +22,12 @@ class PolygonClient:
         self.api_key = api_key or settings.polygon_api_key
         self._limiter = AsyncRateLimiter(max_calls=settings.rate_limit_per_minute)
 
-    async def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=30.0)
+    # Round-3 fix R3-6: previously this class also defined ``async def
+    # _client(self)`` returning a fresh ``httpx.AsyncClient`` — but it was
+    # never invoked anywhere (every real call site constructs the client
+    # inline via ``async with httpx.AsyncClient(...)``). Dead helpers like
+    # this are misleading during reviews (suggests the class owns a long-
+    # lived client) and inflate coverage noise. Deleted.
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
     async def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
