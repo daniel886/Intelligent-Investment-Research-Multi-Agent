@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>智能投研多智能体面板</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, "Helvetica Neue", "PingFang SC", "Segoe UI", sans-serif; }
+body { background: linear-gradient(180deg, #0c1220 0%, #14223d 100%); color: #e8eef9; min-height: 100vh; }
+header { padding: 22px 32px; border-bottom: 1px solid #1f2c46; background: rgba(8,16,32,.6); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: space-between; }
+header h1 { font-size: 18px; letter-spacing: .5px; }
+header span { color: #6a7da0; font-size: 12px; }
+main { max-width: 1280px; margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 320px 1fr; gap: 24px; }
+@media (max-width: 900px){ main { grid-template-columns: 1fr; } }
+.panel { background: rgba(255,255,255,.02); border: 1px solid #1f2c46; border-radius: 12px; padding: 18px; }
+.panel h2 { font-size: 14px; margin-bottom: 12px; color: #9bb1d8; letter-spacing: 1px; text-transform: uppercase; }
+input, textarea, select, button {
+  width: 100%; background: #0d1729; border: 1px solid #243456; color: #e8eef9; border-radius: 8px;
+  padding: 10px 12px; font-size: 14px; outline: none; transition: border-color .15s;
+}
+input:focus, textarea:focus { border-color: #4d7cff; }
+button { background: linear-gradient(90deg,#4d7cff,#7256ff); border: 0; color: #fff; cursor: pointer; font-weight: 600; margin-top: 8px; }
+button:hover { filter: brightness(1.1); }
+button.secondary { background: #243456; }
+.row { display: flex; gap: 8px; margin-top: 8px; }
+.report-card { background: #0d1729; border: 1px solid #243456; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+.report-card h3 { font-size: 15px; margin-bottom: 6px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; margin-right: 6px; }
+.tag.buy { background: rgba(46,204,113,.15); color: #2ecc71; }
+.tag.hold { background: rgba(241,196,15,.15); color: #f1c40f; }
+.tag.sell { background: rgba(231,76,60,.15); color: #e74c3c; }
+.summary { color: #9bb1d8; font-size: 13px; line-height: 1.6; margin-top: 8px; white-space: pre-wrap; }
+ul.watch { list-style: none; }
+ul.watch li { padding: 8px 0; border-bottom: 1px dashed #243456; display: flex; justify-content: space-between; align-items: center; }
+.muted { color: #6a7da0; font-size: 12px; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #4d7cff; border-top-color: transparent; border-radius: 50%; animation: spin .9s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hidden { display: none; }
+.tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.tab { padding: 6px 12px; border-radius: 999px; cursor: pointer; background: #0d1729; border: 1px solid #243456; font-size: 12px; }
+.tab.active { background: #4d7cff; color: #fff; border-color: #4d7cff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 智能投研多智能体系统</h1>
+  <span>LangGraph · LangChain · 3 Agents</span>
+</header>
+<main>
+  <aside>
+    <section class="panel">
+      <h2>新建研究</h2>
+      <textarea id="query" rows="4" placeholder="例：分析腾讯控股、苹果和比特币的基本面与风险"></textarea>
+      <input id="symbols" placeholder="可选：手动指定 ticker (逗号分隔)" />
+      <select id="lang">
+        <option value="zh-CN">中文报告</option>
+        <option value="en-US">中英双语</option>
+      </select>
+      <button id="runBtn">执行研究</button>
+      <button id="dailyBtn" class="secondary">立即生成今日日报</button>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>股票池</h2>
+      <div class="row">
+        <input id="watchSymbol" placeholder="symbol e.g. AAPL" />
+        <button id="addWatch" style="width:80px;margin-top:0">添加</button>
+      </div>
+      <ul class="watch" id="watchList"></ul>
+    </section>
+  </aside>
+  <section>
+    <div class="panel">
+      <div class="tabs">
+        <div class="tab active" data-tab="reports">历史报告</div>
+        <div class="tab" data-tab="search">语义搜索</div>
+      </div>
+      <div id="tab-reports">
+        <div id="reports"></div>
+      </div>
+      <div id="tab-search" class="hidden">
+        <input id="searchQ" placeholder="输入自然语言进行语义检索…" />
+        <button id="searchBtn">搜索</button>
+        <div id="searchResults" style="margin-top:12px"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+const API = '/api/v1';
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts) {
+  const r = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function tagFor(rec) {
+  if (['买入','增持'].includes(rec)) return 'buy';
+  if (['持有','观望'].includes(rec)) return 'hold';
+  return 'sell';
+}
+
+function reportCard(r) {
+  return `<div class="report-card">
+    <h3>${r.title || r.symbol}</h3>
+    <div>
+      <span class="tag ${tagFor(r.recommendation)}">${r.recommendation}</span>
+      <span class="muted">${r.market || ''} · 置信度 ${(r.confidence||0).toFixed(2)} · 目标价 ${r.target_price ?? '-'}</span>
+    </div>
+    <div class="summary">${(r.executive_summary||'').replace(/</g,'&lt;')}</div>
+  </div>`;
+}
+
+async function loadReports() {
+  $('reports').innerHTML = '<span class="spinner"></span> 加载中…';
+  try {
+    const data = await api('/reports?limit=20');
+    $('reports').innerHTML = data.length ? data.map(reportCard).join('') : '<p class="muted">暂无历史报告</p>';
+  } catch (e) {
+    $('reports').innerHTML = `<p class="muted">加载失败: ${e.message}</p>`;
+  }
+}
+
+async function loadWatch() {
+  try {
+    const list = await api('/watchlist');
+    $('watchList').innerHTML = list.map(w =>
+      `<li><span><b>${w.symbol}</b> <span class="muted">${w.name||''} (${w.market})</span></span>
+       <button class="secondary" style="width:auto;padding:4px 10px;margin:0" onclick="delWatch('${w.symbol}')">删除</button></li>`
+    ).join('') || '<li class="muted">空</li>';
+  } catch (e) { $('watchList').innerHTML = `<li class="muted">${e.message}</li>`; }
+}
+
+async function delWatch(s) {
+  await api('/watchlist/' + encodeURIComponent(s), { method: 'DELETE' });
+  loadWatch();
+}
+
+$('addWatch').onclick = async () => {
+  const s = $('watchSymbol').value.trim();
+  if (!s) return;
+  await api('/watchlist', { method: 'POST', body: JSON.stringify({ symbol: s }) });
+  $('watchSymbol').value = '';
+  loadWatch();
+};
+
+$('runBtn').onclick = async () => {
+  const q = $('query').value.trim();
+  if (!q) { alert('请输入研究指令'); return; }
+  const symbols = $('symbols').value.trim() ? $('symbols').value.split(',').map(s=>s.trim()) : null;
+  const language = $('lang').value;
+  $('runBtn').disabled = true;
+  $('runBtn').innerHTML = '<span class="spinner"></span>正在调度多智能体…';
+  try {
+    const data = await api('/research', { method: 'POST', body: JSON.stringify({ query: q, symbols, language }) });
+    $('reports').innerHTML = data.map(reportCard).join('') + $('reports').innerHTML;
+  } catch (e) { alert('失败: ' + e.message); }
+  finally {
+    $('runBtn').disabled = false;
+    $('runBtn').textContent = '执行研究';
+  }
+};
+
+$('dailyBtn').onclick = async () => {
+  await api('/scheduler/run-now', { method: 'POST' });
+  alert('日报生成任务已提交，请稍后刷新。');
+};
+
+$('searchBtn').onclick = async () => {
+  const q = $('searchQ').value.trim();
+  if (!q) return;
+  const data = await api(`/reports/search/semantic?q=${encodeURIComponent(q)}&n=5`);
+  $('searchResults').innerHTML = (data.results||[]).map(r =>
+    `<div class="report-card"><h3>${r.metadata?.symbol||'-'}</h3>
+     <div class="muted">${r.metadata?.recommendation||''} · ${r.metadata?.created_at||''}</div>
+     <div class="summary">${(r.document||'').slice(0,400)}</div></div>`
+  ).join('') || '<p class="muted">无结果</p>';
+};
+
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    const id = t.dataset.tab;
+    $('tab-reports').classList.toggle('hidden', id !== 'reports');
+    $('tab-search').classList.toggle('hidden', id !== 'search');
+  };
+});
+
+loadReports();
+loadWatch();
+setInterval(loadReports, 30000);
+</script>
+</body>
+</html>

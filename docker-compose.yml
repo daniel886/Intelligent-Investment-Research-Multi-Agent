@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  research-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: intelligent-investment-research:latest
+    container_name: investment_research_agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - DATABASE_URL=sqlite+aiosqlite:///./data/investment.db
+      - CHROMA_PERSIST_DIR=./data/chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Standalone scheduler service (split worker)
+  # scheduler:
+  #   build: .
+  #   container_name: investment_scheduler
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   command: ["python", "-m", "services.scheduler"]
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./logs:/app/logs
+  #   depends_on:
+  #     - research-agent
+
+networks:
+  default:
+    name: investment_research_net
