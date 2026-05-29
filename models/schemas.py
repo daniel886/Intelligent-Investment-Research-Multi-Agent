@@ -1,11 +1,16 @@
 """Pydantic v2 schemas shared across agents and API."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC ``now``. The legacy naive helper was deprecated in 3.12+."""
+    return datetime.now(timezone.utc)
 
 
 # ============================================================
@@ -140,7 +145,7 @@ class ResearchReport(BaseModel):
     target_price: Optional[float] = None
     confidence: float = 0.0
     bilingual: Optional[Dict[str, str]] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class DailyDigest(BaseModel):

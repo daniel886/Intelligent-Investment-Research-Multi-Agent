@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -31,7 +31,7 @@ async def run_daily_report(symbols: Optional[List[str]] = None) -> List[Research
 
     logger.info("[Scheduler] running daily report for {}", symbols)
     request = ResearchRequest(
-        query=f"生成每日投资日报 ({datetime.utcnow().strftime('%Y-%m-%d')})",
+        query=f"生成每日投资日报 ({datetime.now(timezone.utc).strftime('%Y-%m-%d')})",
         symbols=symbols,
         language=settings.language,
     )
@@ -44,7 +44,7 @@ async def run_daily_report(symbols: Optional[List[str]] = None) -> List[Research
             logger.warning("Save report failed: {}", e)
     if reports:
         digest_lines = [
-            f"📊 *每日投资日报* {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"📊 *每日投资日报* {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"覆盖标的: {', '.join(symbols)}",
             "",
         ]

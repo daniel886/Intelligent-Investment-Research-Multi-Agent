@@ -1,7 +1,7 @@
 """Polygon.io REST client wrapper (async)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -44,7 +44,7 @@ class PolygonClient:
         timespan: str = "day",
         days: int = 120,
     ) -> List[PriceBar]:
-        end = datetime.utcnow().date()
+        end = datetime.now(timezone.utc).date()
         start = end - timedelta(days=days)
         path = f"/v2/aggs/ticker/{symbol}/range/{multiplier}/{timespan}/{start}/{end}"
         try:
@@ -56,7 +56,7 @@ class PolygonClient:
         for r in data.get("results", []) or []:
             bars.append(
                 PriceBar(
-                    timestamp=datetime.utcfromtimestamp(r["t"] / 1000),
+                    timestamp=datetime.fromtimestamp(r["t"] / 1000, tz=timezone.utc),
                     open=float(r["o"]),
                     high=float(r["h"]),
                     low=float(r["l"]),

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from config.logging import logger
@@ -46,7 +46,7 @@ class XueqiuScraper:
                                 title=title,
                                 url=f"https://xueqiu.com{href}" if href and href.startswith("/") else href,
                                 source="xueqiu",
-                                published_at=datetime.utcnow(),
+                                published_at=datetime.now(timezone.utc),
                             )
                         )
                 await browser.close()
@@ -88,7 +88,7 @@ class EastMoneyScraper:
                                 title=title,
                                 url=href,
                                 source="eastmoney",
-                                published_at=datetime.utcnow(),
+                                published_at=datetime.now(timezone.utc),
                             )
                         )
                 await browser.close()

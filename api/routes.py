@@ -1,7 +1,7 @@
 """FastAPI HTTP routes."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
@@ -41,7 +41,7 @@ class HealthResponse(BaseModel):
 # ----------------- Routes -----------------
 @router.get("/health", response_model=HealthResponse, tags=["meta"])
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", time=datetime.utcnow())
+    return HealthResponse(status="ok", time=datetime.now(timezone.utc))
 
 
 @router.post("/research", response_model=List[ResearchReport], tags=["research"])

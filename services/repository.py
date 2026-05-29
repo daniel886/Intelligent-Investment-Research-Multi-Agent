@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import desc, select
@@ -12,6 +12,11 @@ from config.logging import logger
 from models.database import AsyncSessionLocal, ReportORM, WatchlistORM
 from models.schemas import ResearchReport
 from services.vectorstore import get_vector_store
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC now matching the DB column semantics."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class ReportRepository:
@@ -31,7 +36,7 @@ class ReportRepository:
                     confidence=report.confidence,
                     full_json=report.model_dump_json(),
                     language=report.request.language,
-                    created_at=report.created_at or datetime.utcnow(),
+                    created_at=report.created_at or _utcnow_naive(),
                 )
                 session.add(row)
                 await session.commit()
@@ -57,14 +62,10 @@ class ReportRepository:
     @staticmethod
     async def list_recent(limit: int = 20, symbol: Optional[str] = None) -> List[ResearchReport]:
         async with AsyncSessionLocal() as session:
-            stmt = select(ReportORM).order_by(desc(ReportORM.created_at)).limit(limit)
+            stmt = select(ReportORM)
             if symbol:
-                stmt = (
-                    select(ReportORM)
-                    .where(ReportORM.symbol == symbol)
-                    .order_by(desc(ReportORM.created_at))
-                    .limit(limit)
-                )
+                stmt = stmt.where(ReportORM.symbol == symbol)
+            stmt = stmt.order_by(desc(ReportORM.created_at)).limit(limit)
             res = await session.execute(stmt)
             rows = res.scalars().all()
             out: List[ResearchReport] = []

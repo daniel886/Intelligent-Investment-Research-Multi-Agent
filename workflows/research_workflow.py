@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -186,7 +186,7 @@ class ResearchWorkflow:
             except Exception:  # noqa: BLE001
                 bilingual = {"zh-CN": text}
 
-        title = f"{symbol} 投资研究报告 - {datetime.utcnow().strftime('%Y-%m-%d')}"
+        title = f"{symbol} 投资研究报告 - {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         executive_summary = (text.splitlines()[0] if text else "未能生成执行摘要").strip()[:500]
 
         report = ResearchReport(

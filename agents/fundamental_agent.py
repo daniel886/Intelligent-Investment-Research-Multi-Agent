@@ -60,14 +60,38 @@ class FundamentalAgent(BaseAgent):
         )
         summary = await self.llm_summary(prompt, context)
 
-        # Parse findings: take last 5 non-empty lines starting with - or 数字
+        # Parse findings: take last few non-empty lines starting with bullet or "<digit><punct>".
+        # Recognise Latin AND CJK / full-width punctuation so Chinese-numbered lists match.
+        bullet_chars = ("-", "•", "·", "*", "—", "–")
+        # Latin: ).,  ;  CJK: 。、，；）  ; full-width period
+        numbered_punct = set(").,;:、。，；）：．")
         findings = []
         for line in (summary or "").splitlines():
             l = line.strip()
             if not l:
                 continue
-            if l.startswith(("-", "•", "·")) or (len(l) > 2 and l[0].isdigit() and l[1] in ").、,"):
-                findings.append(l.lstrip("-•· ").strip())
+            is_bullet = l.startswith(bullet_chars)
+            is_numbered = (
+                len(l) >= 2
+                and l[0].isdigit()
+                and l[1] in numbered_punct
+            )
+            # Also handle 2-digit ordinals like "10. ..."
+            if not is_numbered and len(l) >= 3 and l[0].isdigit() and l[1].isdigit() and l[2] in numbered_punct:
+                is_numbered = True
+            if not (is_bullet or is_numbered):
+                continue
+            cleaned = l.lstrip("-•·*—– ").strip()
+            if is_numbered:
+                # Drop the leading "<digits><punct>" so the finding is just the body.
+                i = 0
+                while i < len(cleaned) and cleaned[i].isdigit():
+                    i += 1
+                while i < len(cleaned) and cleaned[i] in numbered_punct:
+                    i += 1
+                cleaned = cleaned[i:].strip()
+            if cleaned:
+                findings.append(cleaned)
         findings = findings[:6]
 
         confidence = 0.6

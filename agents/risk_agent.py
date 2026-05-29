@@ -42,6 +42,13 @@ class RiskAgent(BaseAgent):
             return self._empty_report(symbol, reason="无法获取历史价格")
 
         volatility, max_dd, var_95 = compute_risk_metrics(bars)
+        if volatility is None or max_dd is None or var_95 is None:
+            # compute_risk_metrics needs at least ~20 bars; bail out gracefully
+            # instead of crashing on the f-string below.
+            return self._empty_report(
+                symbol,
+                reason=f"历史数据不足（仅 {len(bars)} 条 K 线，至少需要 20 条）",
+            )
         level = self._classify(volatility, max_dd)
         risk = RiskAssessment(
             symbol=symbol,

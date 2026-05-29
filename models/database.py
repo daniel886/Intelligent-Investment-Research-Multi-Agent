@@ -1,7 +1,7 @@
 """Async SQLAlchemy database setup with ORM models for reports & watchlist."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -15,6 +15,13 @@ from sqlalchemy.orm import DeclarativeBase
 
 from config import settings
 from config.logging import logger
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC now. Replaces the legacy deprecated naive helper while
+    preserving the original semantics (column type is plain DateTime,
+    not DateTime(timezone=True))."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -34,7 +41,7 @@ class ReportORM(Base):
     confidence = Column(Float, default=0.0)
     full_json = Column(Text, nullable=False)  # serialized ResearchReport
     language = Column(String(8), default="zh-CN")
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow_naive, index=True)
 
 
 class WatchlistORM(Base):
@@ -45,7 +52,7 @@ class WatchlistORM(Base):
     name = Column(String(128), nullable=True)
     market = Column(String(16), default="未知")
     note = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow_naive)
 
 
 _data_dir = Path(settings.project_root) / "data"
