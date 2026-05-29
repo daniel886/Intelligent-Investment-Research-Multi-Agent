@@ -44,6 +44,11 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    env:
+      # Force docker/* actions onto Node.js 24 ahead of GitHub's 2026-06-02 cut-over.
+      # Docker org has not published a new major yet; this env opts the JS runtime
+      # into Node 24 without changing action versions.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
