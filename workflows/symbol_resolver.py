@@ -64,6 +64,14 @@ STOPWORDS = {
     "OK", "YES", "NO", "WTF", "OMG", "LOL", "ASAP", "FYI", "AKA", "ETC",
     "API", "CEO", "CFO", "COO", "CTO", "GDP", "CPI", "PMI", "IPO", "ETF",
     "USA", "EU", "UK", "CN", "JP", "KR", "HK",
+    # Round-2 fix #6: probe_f surfaced these all-caps English words being
+    # picked up as tickers from sentences like "look at this order book".
+    "LOOK", "ORDER", "BOOK", "SYNC", "ISSUE", "OPEN", "CLOSE", "HIGH", "LOW",
+    "CALL", "PUT", "LONG", "SHORT", "BULL", "BEAR", "RISK", "DATA", "INFO",
+    "TIME", "DATE", "WEEK", "YEAR", "TODAY", "GAIN", "LOSS", "VIEW", "TEXT",
+    "PAGE", "USER", "ITEM", "TASK", "FILE", "PATH", "TYPE", "NAME", "CODE",
+    "TEST", "DONE", "FAIL", "PASS", "TRUE", "NULL", "ZERO", "OVER", "UNDER",
+    "WITH", "FROM", "INTO", "ONTO", "UPON", "ABOUT", "AFTER", "AGAIN",
 }
 
 
@@ -92,10 +100,20 @@ def resolve_symbols(text: str) -> List[str]:
         candidate = m.group(1).upper()
         if _is_valid_ticker(candidate):
             found.append(candidate)
+    # Round-2 fix #6 (workflows/symbol_resolver.py:97): the previous
+    # ``name in lowered`` substring check produced false positives for
+    # English keys — e.g. "btc" matched inside "btcusdt", "eth" inside
+    # "method", "doge" inside "dogged". CJK keys are still substring-matched
+    # because Chinese has no whitespace separators, but English keys are
+    # required to appear as standalone tokens via a word-boundary regex.
     lowered = text.lower()
     for name, ticker in NAME_MAP.items():
-        if name in lowered or name in text:
-            found.append(ticker)
+        if _is_ascii_key(name):
+            if re.search(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", lowered):
+                found.append(ticker)
+        else:
+            if name in text:
+                found.append(ticker)
     # Deduplicate while preserving order
     seen = set()
     unique: List[str] = []
@@ -104,3 +122,8 @@ def resolve_symbols(text: str) -> List[str]:
             seen.add(s)
             unique.append(s)
     return unique
+
+
+def _is_ascii_key(name: str) -> bool:
+    """True for purely-ASCII NAME_MAP keys (e.g. ``btc``, ``meta``)."""
+    return all(ord(ch) < 128 for ch in name)

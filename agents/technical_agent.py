@@ -55,11 +55,11 @@ class TechnicalAgent(BaseAgent):
         )
         summary = await self.llm_summary(prompt, context)
 
+        # Round-2 fix #4 (agents/technical_agent.py:61): use the shared
+        # parse_findings helper so CJK-numbered lists (`1。`, `2、`, …) match
+        # — the previous narrow `-/•/·` parser silently dropped them.
         findings = list(snap.signals)
-        for line in (summary or "").splitlines():
-            l = line.strip().lstrip("-•· ").strip()
-            if l and (line.strip().startswith(("-", "•", "·"))):
-                findings.append(l)
+        findings.extend(self.parse_findings(summary, max_items=8))
         findings = list(dict.fromkeys(findings))[:8]
 
         return AgentReport(

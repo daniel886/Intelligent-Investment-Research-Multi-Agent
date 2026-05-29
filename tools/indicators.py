@@ -12,7 +12,15 @@ def bars_to_df(bars: List[PriceBar]) -> pd.DataFrame:
     if not bars:
         return pd.DataFrame()
     df = pd.DataFrame([b.model_dump() for b in bars])
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    # Round-2 fix #1 (tools/indicators.py:15): pandas 2.x raises
+    # `ValueError: Cannot mix tz-aware with tz-naive values` when a Series mixes
+    # both kinds of datetimes. Mixed sources (yfinance returns tz-aware UTC, while
+    # AlphaVantage/CoinGecko emit tz-naive strings) routinely trigger this.
+    # Coerce everything to tz-aware UTC, then drop tzinfo so downstream pandas/ta
+    # operations behave identically regardless of upstream source.
+    ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df["timestamp"] = ts.dt.tz_convert("UTC").dt.tz_localize(None)
+    df = df.dropna(subset=["timestamp"])
     df = df.sort_values("timestamp").set_index("timestamp")
     return df
 

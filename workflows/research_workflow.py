@@ -231,7 +231,27 @@ class ResearchWorkflow:
 
         logger.info("[Workflow] running for symbols: {}", symbols)
         tasks = [self.run_for_symbol(request, s) for s in symbols]
-        return await asyncio.gather(*tasks)
+        # Round-2 fix #2 (workflows/research_workflow.py:234): without
+        # `return_exceptions=True`, a single failing per-symbol task aborts the
+        # entire batch and the API returns 500 even though the other symbols
+        # would have succeeded. Collect exceptions per-task instead and emit a
+        # placeholder ResearchReport so callers see partial success.
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        reports: List[ResearchReport] = []
+        for sym, res in zip(symbols, results):
+            if isinstance(res, BaseException):
+                logger.exception("[Workflow] symbol {} failed: {}", sym, res)
+                reports.append(
+                    ResearchReport(
+                        request=request,
+                        symbol=sym,
+                        title=f"{sym} 研究失败",
+                        executive_summary=f"研究失败: {type(res).__name__}: {res}",
+                    )
+                )
+            else:
+                reports.append(res)
+        return reports
 
 
 # Singleton accessor

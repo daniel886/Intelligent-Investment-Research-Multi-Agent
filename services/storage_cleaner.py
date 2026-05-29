@@ -32,6 +32,7 @@ import errno
 import os
 import shutil
 import stat
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -77,14 +78,44 @@ def _force_writable(path: Path) -> None:
 
 
 def _on_rmtree_error(func, target, exc_info) -> None:  # noqa: D401, ANN001
-    """rmtree onerror: chmod + retry once, then swallow the error."""
+    """rmtree onerror: chmod + retry once, then swallow the error.
+
+    Round-2 fix #5: This callback used to be wired up alongside
+    ``ignore_errors=True``. CPython short-circuits to a no-op handler when
+    ``ignore_errors`` is true, so this function was dead code and any error
+    we hit was silently swallowed without the chmod+retry happening. Callers
+    now invoke ``_rmtree_safe`` instead, which dispatches to the right
+    callback for the running Python version.
+    """
     try:
         _force_writable(Path(target))
         func(target)
     except OSError as e:
-        # Don't raise — just log and move on. Caller will sweep later.
         if e.errno not in (errno.ENOENT,):
             logger.debug("storage_cleaner: rmtree skipping {} ({})", target, e)
+
+
+def _on_rmtree_exc(func, target, exc) -> None:  # noqa: D401, ANN001
+    """Python 3.12+ ``onexc`` callback (single exception, not tuple)."""
+    try:
+        _force_writable(Path(target))
+        func(target)
+    except OSError as e:
+        if e.errno not in (errno.ENOENT,):
+            logger.debug("storage_cleaner: rmtree skipping {} ({})", target, e)
+
+
+def _rmtree_safe(path: Path) -> None:
+    """``shutil.rmtree`` with the correct error callback for this interpreter.
+
+    On Python 3.12 ``onerror`` is deprecated in favour of ``onexc``; on 3.14
+    ``onerror`` is removed outright. The callback never re-raises, so we get
+    the same effect as ``ignore_errors=True`` *plus* the chmod+retry path.
+    """
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_on_rmtree_exc)
+    else:
+        shutil.rmtree(path, onerror=_on_rmtree_error)
 
 
 def _move_to_trash(path: Path) -> Optional[Path]:
@@ -136,7 +167,7 @@ def safe_delete(path: str | os.PathLike[str]) -> bool:
             # Could not even rename — last-ditch direct unlink (still tolerant).
             try:
                 if p.is_dir() and not p.is_symlink():
-                    shutil.rmtree(p, ignore_errors=True, onerror=_on_rmtree_error)
+                    _rmtree_safe(p)
                 else:
                     _force_writable(p)
                     p.unlink(missing_ok=True)
@@ -157,7 +188,7 @@ def _try_remove(path: Path) -> bool:
     """Remove a path silently. Returns True iff it's gone afterwards."""
     try:
         if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path, ignore_errors=True, onerror=_on_rmtree_error)
+            _rmtree_safe(path)
         else:
             _force_writable(path)
             path.unlink(missing_ok=True)

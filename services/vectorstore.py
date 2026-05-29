@@ -107,15 +107,31 @@ class ReportVectorStore:
                 kwargs["query_texts"] = [text]
             res = self._collection.query(**kwargs)
             out: List[Dict[str, Any]] = []
-            ids = res.get("ids", [[]])[0]
-            docs = res.get("documents", [[]])[0]
-            metas = res.get("metadatas", [[]])[0]
+            # Round-2 fix #7 (services/vectorstore.py:110): Chroma usually
+            # returns ``{"ids": [[...]]}`` (one inner list per query), but on
+            # an empty collection some versions return ``{"ids": []}``
+            # (flattened). The previous ``res.get("ids", [[]])[0]`` then
+            # raised IndexError. ``_first_or_empty`` handles both shapes.
+            ids = self._first_or_empty(res.get("ids"))
+            docs = self._first_or_empty(res.get("documents"))
+            metas = self._first_or_empty(res.get("metadatas"))
             for i, d, m in zip(ids, docs, metas):
                 out.append({"id": i, "document": d, "metadata": m})
             return out
         except Exception as e:  # noqa: BLE001
             logger.warning("Chroma query failed: {}", e)
             return []
+
+    @staticmethod
+    def _first_or_empty(value: Any) -> List[Any]:
+        """Return the first inner list, or ``[]`` for any empty/flat result."""
+        if not value:
+            return []
+        first = value[0]
+        if isinstance(first, list):
+            return first
+        # Flat list — Chroma occasionally returns a 1-D list instead of 2-D.
+        return list(value)
 
 
 _singleton: Optional[ReportVectorStore] = None

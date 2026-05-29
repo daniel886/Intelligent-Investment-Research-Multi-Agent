@@ -239,3 +239,239 @@ def test_schemas_utcnow_is_timezone_aware():
     # Must be UTC-aligned, regardless of DST.
     assert now.utcoffset() == timedelta(0)
     assert now.tzinfo.utcoffset(now) == timezone.utc.utcoffset(now)
+
+
+# ===========================================================================
+# Round-2 regression tests (one per Phase-3 finding).
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Fix R2-#1 — tools/indicators.bars_to_df handles mixed tz-aware/naive input
+# ---------------------------------------------------------------------------
+def test_r2_bars_to_df_mixed_tz_no_crash():
+    from models.schemas import Market, PriceBar
+    from tools.indicators import bars_to_df
+
+    bars = [
+        PriceBar(
+            symbol="X", market=Market.US,
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            open=1, high=1, low=1, close=1, volume=0,
+        ),
+        PriceBar(
+            symbol="X", market=Market.US,
+            timestamp=datetime(2024, 1, 2),  # naive
+            open=2, high=2, low=2, close=2, volume=0,
+        ),
+        PriceBar(
+            symbol="X", market=Market.US,
+            timestamp=datetime(2024, 1, 3, tzinfo=timezone.utc),
+            open=3, high=3, low=3, close=3, volume=0,
+        ),
+    ]
+    df = bars_to_df(bars)
+    assert len(df) == 3
+    assert df.index.tz is None  # normalised to tz-naive UTC
+    # Sorted ascending.
+    assert df["close"].iloc[0] == 1
+    assert df["close"].iloc[-1] == 3
+
+
+# ---------------------------------------------------------------------------
+# Fix R2-#2 — workflow.run uses return_exceptions=True (no batch poisoning)
+# ---------------------------------------------------------------------------
+def test_r2_workflow_run_partial_success():
+    from models.schemas import Market, ResearchReport, ResearchRequest
+    from workflows.research_workflow import ResearchWorkflow
+
+    wf = ResearchWorkflow.__new__(ResearchWorkflow)
+
+    async def fake_run_for_symbol(req, sym):
+        if sym == "BAD":
+            raise RuntimeError("boom")
+        return ResearchReport(
+            request=req, symbol=sym, title=f"{sym} ok",
+            executive_summary=f"ok-{sym}",
+        )
+
+    wf.run_for_symbol = fake_run_for_symbol  # type: ignore[assignment]
+    req = ResearchRequest(query="x", symbols=["AAA", "BAD", "BBB"], market=Market.US)
+    reports = asyncio.run(ResearchWorkflow.run(wf, req))
+
+    assert len(reports) == 3
+    assert reports[0].symbol == "AAA" and "ok-AAA" in reports[0].executive_summary
+    assert reports[1].symbol == "BAD" and "RuntimeError" in reports[1].executive_summary
+    assert reports[2].symbol == "BBB" and "ok-BBB" in reports[2].executive_summary
+
+
+# ---------------------------------------------------------------------------
+# Fix R2-#3 — CORS: wildcard + credentials cannot coexist
+# ---------------------------------------------------------------------------
+def test_r2_cors_wildcard_disables_credentials(monkeypatch):
+    import importlib
+    import sys
+
+    from starlette.testclient import TestClient
+
+    monkeypatch.setenv("CORS_ORIGINS", "*")
+    for mod in list(sys.modules):
+        if mod == "api" or mod.startswith("api.") or mod == "config" or mod.startswith("config."):
+            sys.modules.pop(mod, None)
+    api_mod = importlib.import_module("api")
+    app = api_mod.create_app()
+
+    r = TestClient(app).get("/health", headers={"Origin": "https://attacker.example"})
+    acc = r.headers.get("access-control-allow-credentials")
+    assert acc is None or acc.lower() != "true"
+
+
+def test_r2_cors_explicit_allowlist_keeps_credentials(monkeypatch):
+    import importlib
+    import sys
+
+    from starlette.testclient import TestClient
+
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
+    for mod in list(sys.modules):
+        if mod == "api" or mod.startswith("api.") or mod == "config" or mod.startswith("config."):
+            sys.modules.pop(mod, None)
+    api_mod = importlib.import_module("api")
+    app = api_mod.create_app()
+
+    r = TestClient(app).get("/health", headers={"Origin": "https://app.example.com"})
+    assert r.headers.get("access-control-allow-origin") == "https://app.example.com"
+    assert (r.headers.get("access-control-allow-credentials") or "").lower() == "true"
+
+
+# ---------------------------------------------------------------------------
+# Fix R2-#4 — shared parse_findings handles CJK punctuation everywhere
+# ---------------------------------------------------------------------------
+def test_r2_parse_findings_handles_cjk_numbered_lists():
+    from agents.base import BaseAgent
+
+    sample = (
+        "结论:\n"
+        "1。短期偏多。\n"
+        "2、关注 50 日均线。\n"
+        "3）MACD 金叉。\n"
+        "4. RSI 接近超买。\n"
+        "- 严守止损位 95。\n"
+    )
+    findings = BaseAgent.parse_findings(sample, max_items=10)
+    assert len(findings) == 5
+    assert findings[0].startswith("短期偏多")
+    assert findings[1].startswith("关注")
+    assert findings[2].startswith("MACD")
+    assert findings[3].startswith("RSI")
+    assert findings[4].startswith("严守止损位")
+
+
+def test_r2_parse_findings_used_by_both_agents():
+    """Both technical_agent and fundamental_agent must delegate to the
+    shared helper so future updates stay in sync."""
+    import inspect
+
+    from agents.fundamental_agent import FundamentalAgent
+    from agents.technical_agent import TechnicalAgent
+
+    for cls in (TechnicalAgent, FundamentalAgent):
+        src = inspect.getsource(cls.run)
+        assert "parse_findings" in src, f"{cls.__name__}.run must use parse_findings"
+
+
+# ---------------------------------------------------------------------------
+# Fix R2-#5 — storage_cleaner does NOT mix ignore_errors=True with onerror
+# ---------------------------------------------------------------------------
+def test_r2_storage_cleaner_no_dead_onerror_combo():
+    import inspect
+
+    import services.storage_cleaner as sc
+
+    src = inspect.getsource(sc)
+    # The dead combination must not appear anywhere in production source.
+    assert "ignore_errors=True, onerror=" not in src
+    assert "ignore_errors=True, onexc=" not in src
+
+
+def test_r2_storage_cleaner_try_remove_nested(tmp_path):
+    import services.storage_cleaner as sc
+
+    nested = tmp_path / "a" / "b" / "c"
+    nested.mkdir(parents=True)
+    (nested / "f.txt").write_text("hi")
+    target = tmp_path / "a"
+
+    assert sc._try_remove(target)
+    assert not target.exists()
+
+
+# ---------------------------------------------------------------------------
+# Fix R2-#6 — symbol_resolver: no false positives from substrings
+# ---------------------------------------------------------------------------
+def test_r2_symbol_resolver_no_substring_false_positives():
+    from workflows.symbol_resolver import resolve_symbols
+
+    # English keys must require word boundaries.
+    got = resolve_symbols("look at the order book and sync the issue with btcusdt method")
+    assert "BTC-USD" not in got
+    assert "ETH-USD" not in got
+    assert "META" not in got
+    assert "LOOK" not in got
+    assert "ORDER" not in got
+    assert "BOOK" not in got
+    assert "SYNC" not in got
+    assert "ISSUE" not in got
+    assert "WITH" not in got
+
+
+def test_r2_symbol_resolver_still_works():
+    from workflows.symbol_resolver import resolve_symbols
+
+    got = resolve_symbols("我想看 AAPL 和 比特币 的走势,以及 0700.HK")
+    assert "AAPL" in got
+    assert "BTC-USD" in got
+    assert "0700.HK" in got
+
+    # Standalone English keys (with word boundary) still resolve.
+    assert "BTC-USD" in resolve_symbols("BTC dropping today")
+    assert "ETH-USD" in resolve_symbols("ETH ATH soon?")
+
+
+# ---------------------------------------------------------------------------
+# Fix R2-#7 — vectorstore.query handles empty + flat Chroma results
+# ---------------------------------------------------------------------------
+def test_r2_vectorstore_query_empty_result():
+    from services.vectorstore import ReportVectorStore
+
+    class _FakeCol:
+        def query(self, **_kw):
+            return {"ids": [], "documents": [], "metadatas": []}
+
+    rs = ReportVectorStore.__new__(ReportVectorStore)
+    rs._collection = _FakeCol()
+    rs._embedder = None
+    rs._vec = lambda _t: None
+
+    assert rs.query("anything") == []
+
+
+def test_r2_vectorstore_query_nested_result():
+    from services.vectorstore import ReportVectorStore
+
+    class _FakeCol:
+        def query(self, **_kw):
+            return {
+                "ids": [["i1", "i2"]],
+                "documents": [["d1", "d2"]],
+                "metadatas": [[{"a": 1}, {"a": 2}]],
+            }
+
+    rs = ReportVectorStore.__new__(ReportVectorStore)
+    rs._collection = _FakeCol()
+    rs._embedder = None
+    rs._vec = lambda _t: None
+
+    out = rs.query("anything", n_results=2)
+    assert [r["id"] for r in out] == ["i1", "i2"]
+    assert out[1]["metadata"]["a"] == 2
